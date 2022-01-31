@@ -177,8 +177,9 @@ sigma <- 5.67 * 10^-8     # Stefan Boltzmann constant
 
 #### Produce relevant time series for the energy balance
 
-expData$TSURF <- (expData$LUPW / sigma )^(1/4) - 273.15 + 15
-expData$TSURF[expData$TSURF>=0] <- 0
+expData$TSURF <- (expData$LUPW / sigma )^(1/4) - 273.15 + 25
+
+
 LL <- vector()      # initialize vector for latent heat (J kg-1)
 
 LL[expData$TSURF>=0.0] <- LL2                   # If surface temperature >= 0.0, then Latent heat flux equals latent heat of evaporation
@@ -197,7 +198,7 @@ Ts_v = (expData$TSURF + 273.15) * (1 + 0.61 * qs)                 # Virtual surf
 # Stability correction
 
 # Richardson number
-Ri_b <- (expData$TAIR - expData$TSURF) / (Zt - z0t) / ((expData$TAIR + expData$TSURF + 273.15^2)/2) / (expData$WSPD/(Zv-z0))^2*g
+Ri_b <- (expData$TAIR - expData$TSURF) / (Zt - z0t) / ((expData$TAIR + expData$TSURF + 273.15*2)/2) / (expData$WSPD/(Zv-z0))^2*g
 # stability factor
 stab_f <- vector()
 stab_f[which(Ri_b>0)] <- (1- 5 * Ri_b[which(Ri_b>0)])^2
@@ -212,6 +213,7 @@ c_bt <- k^2 / log(Zv/z0) / log(Zt/z0t) * stab_f
 H = rho * Cp * c_bt * expData$WSPD * (expData$TAIR - expData$TSURF)      # sensible heat flux (W m-2)
 LE = rho * LL * c_bt * expData$WSPD * (q - qs)                           # latent heat flux (W m-2)
 
+expData$TSURF[expData$TSURF>=0] <- 0
 
 #### Net Radiation
 
@@ -247,7 +249,7 @@ cumD <- melt                          # vector for cumulative deposition [mm]
 
 # add an empty first time step for the input data (this could be improved if you do a spin-up of the model)
 actualSD[is.na(actualSD)] <- 0
-actualSD <- c(0,actualSD)
+actualSD <- c(0,actualSD) * 1000      # convert the SD from m to mm
 TS <- c(0,expData$TSURF)
 Energy_n <- c(0,Energy_n)
 loss <- c(0,LE/LL)                    # Loss or gain due to sublimation and evaporation
@@ -256,37 +258,37 @@ actStor[which(TS>=0&actualSD>0)] <- 0.1
 
 for(i in 2:length(actualSD)){
 
-  if(actualSD[i]>=0.01){
+  if(actualSD[i]>=10){
   
     if(Energy_n[i]>0.0){                                   # If net energy is positive (adds energy to the surface)
       if(TS[i]>=0.0){                                   # If surface temperature is at melting point (positive net energy is used to melt snow)
         melt[i] = (Energy_n[i]/(0.334*10^6))*3600       # Calculate snow melt from positive net energy [mm h-1] 
-        potStor[i] = 0.1*actualSD[i]                       # Potential storage of melt water is set to 10% of swe snowpack
+        potStor[i] = 0.3*actualSD[i]                       # Potential storage of melt water is set to 30% of snowpack
         actStor[i] = min(potStor[i],(actStor[i]+melt[i]))  # Actual storage, limited to potential storage
         coldC[i] <- 0.0                                 # Change in cold content is 0.0 (as positive energy is used for snowmelt) [W m-2]
         
         cumM[i] = cumM[i-1] + melt[i]                   # Cumulative melt expressed in [mm h-1] or [W m-2] 
         cumC[i] = cumC[i-1] + cumC[i]                             
-
+#browser()
       }else{                                            # If surface temperature is below melting point (positive net energy is affecting cold content and used to warm up the snowpack)
-        coldC[i] = Energy_n[i]                          # Cold content equals net energy (conditions: positive net energy and surface temperature is negative) expressed in [Wm-2]
+        coldC[i] = Energy_n[i]*(-1)                     # Cold content equals net energy (conditions: positive net energy and surface temperature is negative) expressed in [Wm-2]
         melt[i] <- 0.0                                  # Melt is 0.0 (because surface temperature <0.0)
         actRefr[i] <- 0.0                               # Actual refreezing 0.0 [W m-2]
 
         cumM[i] = cumM[i-1] + melt[i]
-        cumC[i] = cumC[i-1] - coldC[i]                  # Decrease of cumulative cold content of the snowpack with positive net energy
+        cumC[i] = cumC[i-1] + coldC[i]                  # Decrease of cumulative cold content of the snowpack with positive net energy
         cumR[i] <- cumR[i-1] + actRefr[i]}
     }else{                                              # If net energy is negative or equals 0.0
       if(actStor[i]>0.0){                               # If liquid water is stored within the snowpack
         coldC[i] <- 0.0                                 # Change in cold content is 0.0
-        cumC[i] = cumC[i-1] - coldC[i]
+        cumC[i] = cumC[i-1] + coldC[i]
         refr[i] = (Energy_n[i]/(0.334*10^6))*3600       # Potential refreezing [mm h-1] calculated based on negative energy 
         actRefr[i] = min(refr[i],actStor[i])            # Actual refreezing, limited to available stored liquid water [mm]
         actStor[i] = max((actStor[i]-actRefr[i]),0.0)   # Update storage of liquid water with refreezing
         cumR[i] <- cumR[i-1] + actRefr[i]               # Cumulative refreezing expressed in [mm h-1] or [W m-2]
       }else{                                            # If no melt water is stored within snowpack
         coldC[i] <- Energy_n[i]*-1                      # Change in cold content equals negative net energy [W m-2]
-        cumC[i] = cumC[i-1] - coldC[i]
+        cumC[i] = cumC[i-1] + coldC[i]
         actRefr[i] <- 0.0                               # Actual refreezing is 0.0 (as no liquid water is available for refreezing)
         cumR[i] <- cumR[i-1] + actRefr[i]
         melt[i] = 0.0                                   # Melt is 0.0 as the net energy is negative
@@ -299,7 +301,6 @@ for(i in 2:length(actualSD)){
       cumE[i] = cumE[i-1] + evap[i]
       if(subl[i]<0.0){                                  # If latent heat is negative, then ...
         cumS[i] = cumS[i-1] + subl[i]                   # Cumulative sublimation [mm]
-        countS <- countS + 1                            # Count number of hours that sublimation occurs [h]
       }else{                                            # If latent heat is positive, then ...
         cumD[i] = cumD[i-1] + subl[i]}                   # Cumulative deposition [mm]
 
@@ -325,6 +326,26 @@ datAx1 <- as.POSIXct(TAIRhourly[,1],origin='1970-01-01')
 
 focustime <- seq(4500,8200,1)
 
+# Do the results make sense? Let's check:
+
+par(mar=c(3,2,1,1),mai = c(0.5, 1, 0.1, 0.2),cex.lab=1.5,cex.axis=1.5)
+layout(matrix(c(1,2,3), nrow = 3, ncol = 1, byrow = T))
+
+plot(datAx1[focustime],melt[focustime],type='l',xlab ='',ylab = expression('melt [mm]'),ylim=c(0,10),xaxt='n')
+abline(h = seq(0,10,2),v = seq(datAx1[1],datAx1[length(datAx1)], by = "month"), col="gray", lty=3)
+
+plot(datAx1[focustime],actualSD[focustime],ylim = c(0,600),xlab ='', ylab = expression('snow depth [mm]'),xaxt='n')
+abline(h = seq(0,600,200),v = seq(datAx1[1],datAx1[length(datAx1)], by = "month"), col="gray", lty=3)
+
+plot(datAx1[focustime],cumsum(melt[focustime]),type='l',xlab ='',ylab = expression('cum melt [mm]'),ylim=c(0,600),xaxt='n')
+abline(h = seq(0,600,200),v = seq(datAx1[1],datAx1[length(datAx1)], by = "month"), col="gray", lty=3)
+
+axis.POSIXct(1, at = seq(datAx1[1],datAx1[length(datAx1)], by = "month"), format = "%b-%d")
+
+
+
+
+
 png(file=pathOutput&'//AWS_YalaBC_SNOWEB.png', res = 300,width=3600,height=1800)
 
 
@@ -343,7 +364,7 @@ abline(h = seq(-300,1000,200),v = seq(datAx1[1],datAx1[length(datAx1)], by = "mo
 plot(datAx1[focustime],subl[focustime]*(-1),type='l',lwd=2,ylim = c(0,1),xlab ='', ylab = expression('sublimation [mm]'),xaxt='n')
 abline(h = seq(0,1,0.2),v = seq(datAx1[1],datAx1[length(datAx1)], by = "month"), col="gray", lty=3)
 
-plot(datAx1[focustime],actualSD[focustime],ylim = c(0,0.8),xlab ='', ylab = expression('snow depth [m]'),xaxt='n')
+plot(datAx1[focustime],actualSD[focustime]/1000,ylim = c(0,0.8),xlab ='', ylab = expression('snow depth [m]'),xaxt='n')
 abline(h = seq(0,1,0.2),v = seq(datAx1[1],datAx1[length(datAx1)], by = "month"), col="gray", lty=3)
 axis.POSIXct(1, at = seq(datAx1[1],datAx1[length(datAx1)], by = "month"), format = "%b-%d")
 
